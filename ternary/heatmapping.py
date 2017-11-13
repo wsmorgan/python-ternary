@@ -16,6 +16,41 @@ from .colormapping import get_cmap, colormapper, colorbar_hack
 
 ## Triangular Heatmaps ##
 
+def blend_region(data, i, j, k, dist):
+    """Computs the average value of the points within a region.
+
+    Paramaters
+    ----------
+    data : dict
+        The data for the entire space.
+    i,j,k : int
+        A point in the space.
+    dist : int
+        How far from the point we desire to be.
+    Returns
+    -------
+    value:
+        The average value within the region.
+    """
+
+    key_size = len(list(data.keys())[0])
+    loc_key = [i,j,k]
+
+    s = 0
+    n_points = 0
+    for key in list(data.keys()):
+        in_region = key_in_region(loc_key, list(key), dist)
+        if in_region:
+            s += data[key]
+            n_points += 1
+
+    if n_points > 0:
+        value = float(s) / n_points
+    else:
+        value = None
+        
+    return value
+
 def blend_value(data, i, j, k, keys=None):
     """Computes the average value of the three vertices of a triangule in the
     simplex triangulation, where two of the vertices are on the lower
@@ -26,12 +61,11 @@ def blend_value(data, i, j, k, keys=None):
         keys = triangle_coordinates(i, j, k)
     # Reduce key from (i, j, k) to (i, j) if necessary
     keys = [tuple(key[:key_size]) for key in keys]
-
     # Sum over the values of the points to blend
-    try:
-        s = sum(data[key] for key in keys)
-        value = s / 3.
-    except KeyError:
+    if len([key for key in keys if key in data]) > 0:
+        s = sum(data[key] for key in keys if key in data)
+        value = s / len([key for key in keys if key in data])
+    else:
         value = None
     return value
 
@@ -75,9 +109,37 @@ def alt_triangle_coordinates(i, j, k):
 
     return [(i, j + 1, k - 1), (i + 1, j, k - 1), (i + 1, j + 1, k - 2)]
 
+def key_in_region(origin_point, key, dist):
+    """Determines if a key is within a region defined by dist of the original_point.
+
+    Parameters
+    ----------
+    origin_point : list of int
+        The point we want to define a region around.
+    key : list of int
+        Point for which we want to know if it lies in the region.
+    dist : int
+        How far from the origin_point should the region extend.
+
+    Returns
+    -------
+    in_region : bool
+       True if key in region.
+    """
+    in_region = True
+    if key[0] >= (origin_point[0] + dist) or key[0] <= (origin_point[0] -dist):
+        in_region = False
+    if key[1] >= (origin_point[1] + dist) or key[1] <= (origin_point[1] -dist):
+        in_region = False
+    if key[2] >= (origin_point[2] + dist) or key[2] <= (origin_point[2] -dist):
+        in_region = False
+    
+    return in_region
+
 ## Hexagonal Heatmaps ##
 
 def generate_hexagon_deltas():
+
     """
     Generates a dictionary of the necessary additive vectors to generate the
     heaxagon points for the haxagonal heatmap.
@@ -132,7 +194,7 @@ def hexagon_coordinates(i, j, k):
 
 ## Heatmaps ##
 
-def polygon_generator(data, scale, style, permutation=None):
+def polygon_generator(data, scale, style, permutation=None, dist=None):
     """Generator for the vertices of the polygon to be colored and its color,
     depending on style. Called by heatmap."""
 
@@ -163,21 +225,30 @@ def polygon_generator(data, scale, style, permutation=None):
             # Upside-down triangles
             if (i < scale) and (j < scale) and (k >= 1):
                 vertices = alt_triangle_coordinates(i, j, k)
-                value = blend_value(data, i, j, k)
+                if dist == None:
+                    value = blend_value(data, i, j, k)
+                else:
+                    value = blend_region(data, i, j, k, dist)
                 yield (map(project, vertices), value)
         elif style == 't':
             # Upright triangles
             if (i < scale) and (j < scale) and (k > 0):
                 vertices = triangle_coordinates(i, j, k)
-                value = blend_value(data, i, j, k)
+                if dist == None:
+                    value = blend_value(data, i, j, k)
+                else:
+                    value = blend_region(data, i, j, k, dist)
                 yield (map(project, vertices), value)
             # If not on the boundary add the upside-down triangle
             if (i < scale) and (j < scale) and (k > 1):
                 vertices = alt_triangle_coordinates(i, j, k)
-                value = alt_blend_value(data, i, j, k)
+                if dist == None:
+                    value = blend_value(data, i, j, k)
+                else:
+                    value = blend_region(data, i, j, k, dist)
                 yield (map(project, vertices), value)
 
-def heatmap(data, scale, vmin=None, vmax=None, cmap=None, ax=None,
+def heatmap(data, scale, dist=None, vmin=None, vmax=None, cmap=None, ax=None,
             scientific=False, style='triangular', colorbar=True,
             permutation=None, colormap=True, cbarlabel=None):
     """
@@ -230,7 +301,7 @@ def heatmap(data, scale, vmin=None, vmax=None, cmap=None, ax=None,
         raise ValueError("Heatmap style must be 'triangular', 'dual-triangular', or 'hexagonal'")
 
     vertices_values = polygon_generator(data, scale, style,
-                                       permutation=permutation)
+                                        permutation=permutation,dist=dist)
 
     # Draw the polygons and color them
     for vertices, value in vertices_values:
